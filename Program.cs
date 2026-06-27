@@ -15,6 +15,10 @@ Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
     .CreateLogger();
 
+// Очищаем переменную PORT, чтобы она не ломала драйвер PostgreSQL
+Environment.SetEnvironmentVariable("PORT", null);
+
+
 // ─── Host ─────────────────────────────────────────────────────────────────────
 var host = Host.CreateDefaultBuilder(args)
     .UseSerilog()
