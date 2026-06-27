@@ -18,7 +18,6 @@ Log.Logger = new LoggerConfiguration()
 // Очищаем переменную PORT, чтобы она не ломала драйвер PostgreSQL
 Environment.SetEnvironmentVariable("PORT", null);
 
-
 // ─── Host ─────────────────────────────────────────────────────────────────────
 var host = Host.CreateDefaultBuilder(args)
     .UseSerilog()
@@ -41,7 +40,12 @@ var host = Host.CreateDefaultBuilder(args)
         {
             var uri = new Uri(rawConnStr);
             var userInfo = uri.UserInfo.Split(':');
-            connStr = $"Host={uri.Host};Port={uri.Port};Database={uri.AbsolutePath.TrimStart('/')};Username={userInfo[0]};Password={userInfo[1]};SSL Mode=Require;Trust Server Certificate=true";
+            
+            // Фикс порта: если в URI порт не указан, uri.Port вернет -1. 
+            // В таком случае принудительно ставим стандартный порт PostgreSQL (5432)
+            int port = uri.Port == -1 ? 5432 : uri.Port;
+
+            connStr = $"Host={uri.Host};Port={port};Database={uri.AbsolutePath.TrimStart('/')};Username={userInfo[0]};Password={userInfo[1]};SSL Mode=Require;Trust Server Certificate=true";
         }
         else
         {
@@ -75,29 +79,19 @@ using (var scope = host.Services.CreateScope())
 await host.RunAsync();
 
 // ─── BotHostedService ─────────────────────────────────────────────────────────
-public class BotHostedService : BackgroundService
+public class BotHostedService(ITelegramBotClient bot, IServiceProvider sp, ILogger<BotHostedService> logger)
+    : BackgroundService
 {
-    private readonly ITelegramBotClient _bot;
-    private readonly IServiceProvider _sp;
-    private readonly ILogger<BotHostedService> _logger;
-
-    public BotHostedService(ITelegramBotClient bot, IServiceProvider sp, ILogger<BotHostedService> logger)
-    {
-        _bot = bot;
-        _sp = sp;
-        _logger = logger;
-    }
-
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("🤖 Бот запущен");
+        logger.LogInformation("🤖 Бот запущен");
 
         var options = new ReceiverOptions
         {
             AllowedUpdates = [UpdateType.Message]
         };
 
-        _bot.StartReceiving(
+        bot.StartReceiving(
             updateHandler: HandleUpdateAsync,
             errorHandler: HandleErrorAsync,
             receiverOptions: options,
@@ -109,7 +103,7 @@ public class BotHostedService : BackgroundService
 
     private async Task HandleUpdateAsync(ITelegramBotClient bot, Telegram.Bot.Types.Update update, CancellationToken ct)
     {
-        using var scope = _sp.CreateScope();
+        using var scope = sp.CreateScope();
         var handler = scope.ServiceProvider.GetRequiredService<UpdateHandler>();
         try
         {
@@ -117,13 +111,13 @@ public class BotHostedService : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Ошибка при обработке апдейта");
+            logger.LogError(ex, "Ошибка при обработке апдейта");
         }
     }
 
     private Task HandleErrorAsync(ITelegramBotClient bot, Exception ex, CancellationToken ct)
     {
-        _logger.LogError(ex, "Ошибка Telegram");
+        logger.LogError(ex, "Ошибка Telegram");
         return Task.CompletedTask;
     }
 }
