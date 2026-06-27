@@ -28,8 +28,21 @@ var host = Host.CreateDefaultBuilder(args)
         var token = ctx.Configuration["BotToken"]
             ?? throw new Exception("BotToken не задан в appsettings.json");
 
-        var connStr = ctx.Configuration.GetConnectionString("Default")
-            ?? throw new Exception("ConnectionString не задан");
+        var rawConnStr = Environment.GetEnvironmentVariable("DATABASE_URL")
+                         ?? ctx.Configuration.GetConnectionString("Default")
+                         ?? throw new Exception("ConnectionString не задан");
+
+        string connStr;
+        if (rawConnStr.StartsWith("postgres://") || rawConnStr.StartsWith("postgresql://"))
+        {
+            var uri = new Uri(rawConnStr);
+            var userInfo = uri.UserInfo.Split(':');
+            connStr = $"Host={uri.Host};Port={uri.Port};Database={uri.AbsolutePath.TrimStart('/')};Username={userInfo[0]};Password={userInfo[1]};SSL Mode=Require;Trust Server Certificate=true";
+        }
+        else
+        {
+            connStr = rawConnStr;
+        }
 
         // Telegram Bot
         services.AddSingleton<ITelegramBotClient>(new TelegramBotClient(token));
