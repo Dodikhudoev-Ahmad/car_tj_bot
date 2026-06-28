@@ -15,16 +15,13 @@ Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
     .CreateLogger();
 
-// Очищаем переменную PORT, чтобы она не ломала драйвер PostgreSQL
-Environment.SetEnvironmentVariable("PORT", null);
-
 // ─── Host ─────────────────────────────────────────────────────────────────────
 var host = Host.CreateDefaultBuilder(args)
     .UseSerilog()
     .ConfigureAppConfiguration(config =>
     {
         config.AddJsonFile("appsettings.json", optional: false);
-        config.AddEnvironmentVariables(); 
+        config.AddEnvironmentVariables();
     })
     .ConfigureServices((ctx, services) =>
     {
@@ -32,19 +29,15 @@ var host = Host.CreateDefaultBuilder(args)
             ?? throw new Exception("BotToken не задан в appsettings.json");
 
         var rawConnStr = Environment.GetEnvironmentVariable("DATABASE_URL")
-                         ?? ctx.Configuration.GetConnectionString("Default")
-                         ?? throw new Exception("ConnectionString не задан");
+                        ?? ctx.Configuration.GetConnectionString("Default")
+                        ?? throw new Exception("ConnectionString не задан");
 
         string connStr;
         if (rawConnStr.StartsWith("postgres://") || rawConnStr.StartsWith("postgresql://"))
         {
             var uri = new Uri(rawConnStr);
             var userInfo = uri.UserInfo.Split(':');
-            
-            // Фикс порта: если в URI порт не указан, uri.Port вернет -1. 
-            // В таком случае принудительно ставим стандартный порт PostgreSQL (5432)
-            int port = uri.Port == -1 ? 5432 : uri.Port;
-
+            var port = uri.Port == -1 ? 5432 : uri.Port;
             connStr = $"Host={uri.Host};Port={port};Database={uri.AbsolutePath.TrimStart('/')};Username={userInfo[0]};Password={userInfo[1]};SSL Mode=Require;Trust Server Certificate=true";
         }
         else
@@ -52,18 +45,10 @@ var host = Host.CreateDefaultBuilder(args)
             connStr = rawConnStr;
         }
 
-        // Telegram Bot
         services.AddSingleton<ITelegramBotClient>(new TelegramBotClient(token));
-
-        // EF Core + PostgreSQL
-        services.AddDbContext<AppDbContext>(opt =>
-            opt.UseNpgsql(connStr));
-
-        // Services & Handlers
+        services.AddDbContext<AppDbContext>(opt => opt.UseNpgsql(connStr));
         services.AddScoped<CarService>();
         services.AddScoped<UpdateHandler>();
-
-        // Hosted service
         services.AddHostedService<BotHostedService>();
     })
     .Build();
@@ -75,6 +60,22 @@ using (var scope = host.Services.CreateScope())
     await db.Database.MigrateAsync();
     Log.Information("✅ БД готова");
 }
+
+// ─── Фейковый HTTP для Render ─────────────────────────────────────────────────
+var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
+var listener = new System.Net.HttpListener();
+listener.Prefixes.Add($"http://*:{port}/");
+listener.Start();
+Log.Information("🌐 HTTP listener запущен на порту {Port}", port);
+_ = Task.Run(async () =>
+{
+    while (true)
+    {
+        var ctx = await listener.GetContextAsync();
+        ctx.Response.StatusCode = 200;
+        ctx.Response.Close();
+    }
+});
 
 await host.RunAsync();
 
@@ -88,7 +89,7 @@ public class BotHostedService(ITelegramBotClient bot, IServiceProvider sp, ILogg
 
         var options = new ReceiverOptions
         {
-            AllowedUpdates = [UpdateType.Message]
+            AllowedUpdates = [UpdateType.Message, UpdateType.CallbackQuery]
         };
 
         bot.StartReceiving(
